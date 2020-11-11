@@ -8,8 +8,10 @@
 
 python train.py \
   dset=dns \
-  demucs.causal=1 \
-  demucs.hidden=64 \
+  demucs.causal=False \
+  demucs.hidden=32 \
+  demucs.depth=4 \
+  demucs.kernel_size=4 \
   demucs.resample=4 \
   batch_size=128 \
   revecho=1 \
