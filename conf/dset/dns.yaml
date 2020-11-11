@@ -1,8 +1,8 @@
 dset:
-  train: egs/dns/tr
+  train: /isilon/Datasets/Audio/DNS/tr
   valid:
-  test: egs/dns/tt
+  test: /isilon/Datasets/Audio/DNS/ts
   noisy_json:
-  noisy_dir:
+  noisy_dir: /isilon/Datasets/Audio/Valentini/16000/noisy_samples_wav
   matching: dns
 eval_every: 4
