@@ -3,6 +3,7 @@ import onnx
 import torch
 import torchaudio
 import onnxruntime
+import onnx_coreml
 from scipy.io import wavfile
 from onnxsim import simplify
 from denoiser.enhance import write
@@ -50,9 +51,13 @@ ort_inputs = {ort_session.get_inputs()[0].name: audio.detach().cpu().numpy()}
 ort_out = ort_session.run(None, ort_inputs)[0]
 wavfile.write("./ckpt/test/enhanced_with_onnx.wav", 16000, ort_out)
 
-mlmodel = convert(onnx_path,
-                  image_input_names=("input"),
-                  minimum_ios_deployment_target='12')
+# Convert from serialization is KO
+# mlmodel = convert(onnx_path,
+#                   image_input_names=("input"),
+#                   minimum_ios_deployment_target='12')
+
+# Convert from onnx_coreml is OK
+mlmodel = onnx_coreml.convert(onnx.load_model(onnx_path))
 pd = create_preprocess_dict(model.valid_length(length),
                             "Fixed",
                             side_length=model.valid_length(length),
