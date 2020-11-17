@@ -163,9 +163,9 @@ class Demucs(nn.Module):
             mix = mix / (self.floor + std)
         else:
             std = 1
-        length = mix.shape[-1]
+        # length = mix.shape[-1]
         x = mix
-        x = F.pad(x, (0, self.valid_length(length) - length))
+        # x = F.pad(x, (0, self.valid_length(length) - length))
         if self.resample == 2:
             x = upsample2(x)
         elif self.resample == 4:
@@ -175,12 +175,13 @@ class Demucs(nn.Module):
         for encode in self.encoder:
             x = encode(x)
             skips.append(x)
-        x = x.permute(2, 0, 1)
-        x, _ = self.lstm(x)
-        x = x.permute(1, 2, 0)
+        # x = x.permute(2, 0, 1)
+        # x, _ = self.lstm(x)
+        # x = x.permute(1, 2, 0)
         for decode in self.decoder:
             skip = skips.pop(-1)
-            x = x + skip[..., :x.shape[-1]]
+            # x = x + skip[..., :x.shape[-1]]
+            x = x + skip
             x = decode(x)
         if self.resample == 2:
             x = downsample2(x)
@@ -188,7 +189,7 @@ class Demucs(nn.Module):
             x = downsample2(x)
             x = downsample2(x)
 
-        x = x[..., :length]
+        # x = x[..., :length]
         return std * x
 
 
