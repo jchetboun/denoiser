@@ -34,7 +34,7 @@ class BLSTM(nn.Module):
 
 def rescale_conv(conv, reference):
     std = conv.weight.std().detach()
-    scale = (std / reference)**0.5
+    scale = (std / reference) ** 0.5
     conv.weight.data /= scale
     if conv.bias is not None:
         conv.bias.data /= scale
@@ -67,8 +67,8 @@ class Demucs(nn.Module):
         - rescale (float): controls custom weight initialization.
             See https://arxiv.org/abs/1911.13254.
         - floor (float): stability flooring when normalizing.
-
     """
+
     @capture_init
     def __init__(self,
                  chin=1,
@@ -136,7 +136,6 @@ class Demucs(nn.Module):
         Return the nearest valid length to use with the model so that
         there is no time steps left over in a convolutions, e.g. for all
         layers, size of the input - kernel_size % stride = 0.
-
         If the mixture has a valid length, the estimated sources
         will have exactly the same length.
         """
@@ -163,9 +162,9 @@ class Demucs(nn.Module):
             mix = mix / (self.floor + std)
         else:
             std = 1
-        # length = mix.shape[-1]
+        length = mix.shape[-1]
         x = mix
-        # x = F.pad(x, (0, self.valid_length(length) - length))
+        x = F.pad(x, (0, self.valid_length(length) - length))
         if self.resample == 2:
             x = upsample2(x)
         elif self.resample == 4:
@@ -175,13 +174,12 @@ class Demucs(nn.Module):
         for encode in self.encoder:
             x = encode(x)
             skips.append(x)
-        # x = x.permute(2, 0, 1)
+        x = x.permute(2, 0, 1)
         # x, _ = self.lstm(x)
-        # x = x.permute(1, 2, 0)
+        x = x.permute(1, 2, 0)
         for decode in self.decoder:
             skip = skips.pop(-1)
-            # x = x + skip[..., :x.shape[-1]]
-            x = x + skip
+            x = x + skip[..., :x.shape[-1]]
             x = decode(x)
         if self.resample == 2:
             x = downsample2(x)
@@ -189,7 +187,7 @@ class Demucs(nn.Module):
             x = downsample2(x)
             x = downsample2(x)
 
-        # x = x[..., :length]
+        x = x[..., :length]
         return std * x
 
 
@@ -219,7 +217,6 @@ class DemucsStreamer:
     Streaming implementation for Demucs. It supports being fed with any amount
     of audio at a time. You will get back as much audio as possible at that
     point.
-
     Args:
         - demucs (Demucs): Demucs model.
         - dry (float): amount of dry (e.g. input) signal to keep. 0 is maximum
@@ -231,6 +228,7 @@ class DemucsStreamer:
         - resample_buffer (int): size of the buffer of previous inputs/outputs
             kept for resampling.
     """
+
     def __init__(self, demucs,
                  dry=0,
                  num_frames=1,
@@ -304,7 +302,7 @@ class DemucsStreamer:
             dry_signal = frame[:, :stride]
             if demucs.normalize:
                 mono = frame.mean(0)
-                variance = (mono**2).mean()
+                variance = (mono ** 2).mean()
                 self.variance = variance / self.frames + (1 - 1 / self.frames) * self.variance
                 frame = frame / (demucs.floor + math.sqrt(self.variance))
             frame = th.cat([self.resample_in, frame], dim=-1)
@@ -442,7 +440,7 @@ def test():
             frame_size = streamer.demucs.total_stride
     out_rt.append(streamer.flush())
     out_rt = th.cat(out_rt, 1)
-    model_size = sum(p.numel() for p in demucs.parameters()) * 4 / 2**20
+    model_size = sum(p.numel() for p in demucs.parameters()) * 4 / 2 ** 20
     initial_lag = streamer.total_length / sr_ms
     tpf = 1000 * streamer.time_per_frame
     print(f"model size: {model_size:.1f}MB, ", end='')
