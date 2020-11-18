@@ -71,7 +71,7 @@ compress_and_save(mlmodel,
                   ckpt_location=onnx_path,
                   preprocess_dict=pd,
                   model_description="Audio Denoising",
-                  convert_to_float16=False)
+                  convert_to_float16=True)
 
 model = MLModel("./ckpt/dummy.mlmodel")
 data = {"input": audio.detach().cpu().numpy()}
