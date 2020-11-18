@@ -1,4 +1,3 @@
-import os
 import onnx
 import torch
 import torchaudio
@@ -11,8 +10,7 @@ from denoiser.utils import deserialize_model
 from denoiser.resample import upsample2, downsample2
 from serialization.pytorch_converter import convert
 from serialization.utils import create_preprocess_dict, compress_and_save
-
-os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
+from coremltools.models import MLModel
 
 path = "./ckpt/dummy.th"
 pkg = torch.load(path)
@@ -52,12 +50,13 @@ onnx_model = onnx.load(onnx_path)
 onnx.checker.check_model(onnx_model)
 ort_inputs = {ort_session.get_inputs()[0].name: audio.detach().cpu().numpy()}
 ort_out = ort_session.run(None, ort_inputs)[0]
+ort_out = downsample2(downsample2(torch.tensor(ort_out))).numpy()
 wavfile.write("./ckpt/test/enhanced_with_onnx.wav", 16000, ort_out)
 
 # Convert from serialization is KO
 # mlmodel = convert(onnx_path,
 #                   image_input_names=("input"),
-#                   minimum_ios_deployment_target='12')
+#                   minimum_ios_deployment_target='13')
 
 # Convert from onnx_coreml is OK
 mlmodel = onnx_coreml.convert(onnx.load_model(onnx_path), minimum_ios_deployment_target="13")
@@ -73,3 +72,9 @@ compress_and_save(mlmodel,
                   preprocess_dict=pd,
                   model_description="Audio Denoising",
                   convert_to_float16=False)
+
+model = MLModel("./ckpt/dummy.mlmodel")
+data = {"input": audio.detach().cpu().numpy()}
+ml_output = model.predict(data)["output"]
+ml_output = downsample2(downsample2(torch.tensor(ml_output))).numpy()
+wavfile.write("./ckpt/test/enhanced_with_mlmodel.wav", 16000, ml_output)
