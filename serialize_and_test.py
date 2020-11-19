@@ -59,7 +59,8 @@ wavfile.write("./ckpt/test/enhanced_with_onnx.wav", 16000, ort_out)
 #                   minimum_ios_deployment_target='13')
 
 # Convert from onnx_coreml is OK
-mlmodel = onnx_coreml.convert(onnx.load_model(onnx_path), minimum_ios_deployment_target="13")
+# mlmodel = onnx_coreml.convert(onnx.load_model(onnx_path), minimum_ios_deployment_target="13")
+mlmodel = onnx_coreml.convert(onnx.load_model(onnx_path))
 pd = create_preprocess_dict(model.valid_length(length),
                             "Fixed",
                             side_length=model.valid_length(length),
@@ -71,7 +72,7 @@ compress_and_save(mlmodel,
                   ckpt_location=onnx_path,
                   preprocess_dict=pd,
                   model_description="Audio Denoising",
-                  convert_to_float16=True)
+                  convert_to_float16=False)
 
 model = MLModel("./ckpt/dummy.mlmodel")
 data = {"input": audio.detach().cpu().numpy()}
