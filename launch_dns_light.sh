@@ -8,11 +8,11 @@
 
 python train.py \
   dset=dns \
-  demucs.causal=False \
+  demucs.causal=True \
   demucs.hidden=32 \
   demucs.depth=4 \
   demucs.kernel_size=4 \
-  demucs.resample=2 \
+  demucs.resample=1 \
   batch_size=128 \
   revecho=1 \
   segment=10 \
