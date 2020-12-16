@@ -32,6 +32,28 @@ class BLSTM(nn.Module):
         return x, hidden
 
 
+class stacked_BLSTM(nn.Module):
+    def __init__(self, dim, layers=2, bi=True):
+        assert layers == 2
+        super().__init__()
+        klass = nn.LSTM
+        self.lstm0 = klass(bidirectional=bi, num_layers=1, hidden_size=dim, input_size=dim)
+        if bi:
+            self.lstm1 = klass(bidirectional=bi, num_layers=1, hidden_size=dim, input_size=2 * dim)
+        else:
+            self.lstm1 = klass(bidirectional=bi, num_layers=1, hidden_size=dim, input_size=dim)
+        self.linear = None
+        if bi:
+            self.linear = nn.Linear(2 * dim, dim)
+
+    def forward(self, x):
+        x, _ = self.lstm0(x, None)
+        x, _ = self.lstm1(x, None)
+        if self.linear:
+            x = self.linear(x)
+        return x
+
+
 def rescale_conv(conv, reference):
     std = conv.weight.std().detach()
     scale = (std / reference) ** 0.5
@@ -84,7 +106,8 @@ class Demucs(nn.Module):
                  normalize=True,
                  glu=True,
                  rescale=0.1,
-                 floor=1e-3):
+                 floor=1e-3,
+                 use_lstm=True):
 
         super().__init__()
         if resample not in [1, 2, 4]:
@@ -100,6 +123,7 @@ class Demucs(nn.Module):
         self.floor = floor
         self.resample = resample
         self.normalize = normalize
+        self.use_lstm = use_lstm
 
         self.encoder = nn.ModuleList()
         self.decoder = nn.ModuleList()
@@ -127,7 +151,8 @@ class Demucs(nn.Module):
             chin = hidden
             hidden = min(int(growth * hidden), max_hidden)
 
-        self.lstm = BLSTM(chin, bi=not causal)
+        if self.use_lstm:
+            self.lstm = BLSTM(chin, bi=not causal)
         if rescale:
             rescale_module(self, reference=rescale)
 
@@ -175,7 +200,8 @@ class Demucs(nn.Module):
             x = encode(x)
             skips.append(x)
         x = x.permute(2, 0, 1)
-        x, _ = self.lstm(x)
+        if self.use_lstm:
+            x, _ = self.lstm(x)
         x = x.permute(1, 2, 0)
         for decode in self.decoder:
             skip = skips.pop(-1)
@@ -189,6 +215,30 @@ class Demucs(nn.Module):
 
         x = x[..., :length]
         return std * x
+
+    def stack_lstm(self):
+        assert self.lstm.lstm.num_layers == 2
+        new = stacked_BLSTM(self.lstm.lstm.input_size, bi=not self.causal)
+        new.lstm0.weight_ih_l0 = self.lstm.lstm.weight_ih_l0
+        new.lstm0.weight_hh_l0 = self.lstm.lstm.weight_hh_l0
+        new.lstm0.bias_ih_l0 = self.lstm.lstm.bias_ih_l0
+        new.lstm0.bias_hh_l0 = self.lstm.lstm.bias_hh_l0
+        new.lstm1.weight_ih_l0 = self.lstm.lstm.weight_ih_l1
+        new.lstm1.weight_hh_l0 = self.lstm.lstm.weight_hh_l1
+        new.lstm1.bias_ih_l0 = self.lstm.lstm.bias_ih_l1
+        new.lstm1.bias_hh_l0 = self.lstm.lstm.bias_hh_l1
+        if not self.causal:
+            new.lstm0.weight_ih_l0_reverse = self.lstm.lstm.weight_ih_l0_reverse
+            new.lstm0.weight_hh_l0_reverse = self.lstm.lstm.weight_hh_l0_reverse
+            new.lstm0.bias_ih_l0_reverse = self.lstm.lstm.bias_ih_l0_reverse
+            new.lstm0.bias_hh_l0_reverse = self.lstm.lstm.bias_hh_l0_reverse
+            new.lstm1.weight_ih_l0_reverse = self.lstm.lstm.weight_ih_l1_reverse
+            new.lstm1.weight_hh_l0_reverse = self.lstm.lstm.weight_hh_l1_reverse
+            new.lstm1.bias_ih_l0_reverse = self.lstm.lstm.bias_ih_l1_reverse
+            new.lstm1.bias_hh_l0_reverse = self.lstm.lstm.bias_hh_l1_reverse
+            new.linear.weight = self.lstm.linear.weight
+            new.linear.bias = self.lstm.linear.bias
+        self.lstm = new
 
 
 def fast_conv(conv, x):
