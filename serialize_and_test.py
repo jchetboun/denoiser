@@ -34,7 +34,19 @@ path = "./ckpt/best.th"
 pkg = torch.load(path)
 model = deserialize_model(pkg)
 # model.resample = 1
+# model.normalize = False
+# model.use_lstm = False
+# model.stack_lstm()
 model.eval()
+
+# from denoiser.demucs import Demucs
+# model = Demucs(hidden=32,
+#                depth=4,
+#                kernel_size=4,
+#                causal=True,
+#                resample=1,
+#                use_lstm=True)
+# model.stack_lstm()
 
 # Audio for evaluation
 audio_path = "../examples/audio_samples/p232_052_noisy.wav"
@@ -86,6 +98,9 @@ wavfile.write("./ckpt/test/enhanced_with_onnx.wav", 16000, ort_out)
 #                   image_input_names=("input"),
 #                   minimum_ios_deployment_target='13')
 # Convert from onnx_coreml is OK
+# mlmodel = onnx_coreml.convert(onnx.load_model(onnx_path), minimum_ios_deployment_target="13")
+# Now with iOS target 12. I had to edit onnx_coreml.converter.py line 48.
+# But flexible size input does not work anymore.
 mlmodel = onnx_coreml.convert(onnx.load_model(onnx_path), minimum_ios_deployment_target="13")
 pd = create_preprocess_dict(model.valid_length(length),
                             "Fixed",
@@ -102,8 +117,8 @@ compress_and_save(mlmodel,
 
 # Input size update
 model = MLModel("./ckpt/best.mlmodel")
-model = update_input_range(model)
-model.save("./ckpt/best.mlmodel")
+# model = update_input_range(model)
+# model.save("./ckpt/best.mlmodel")
 
 # Test of the CoreML model
 data = {"input": audio.detach().cpu().numpy()}
@@ -112,9 +127,9 @@ ml_output = model.predict(data)["output"]
 # ml_output = downsample2(torch.tensor(ml_output)).numpy()
 wavfile.write("./ckpt/test/enhanced_with_mlmodel.wav", 16000, ml_output)
 # Test on half audio file to check flexible input size
-data = {"input": half_audio.detach().cpu().numpy()}
-ml_output = model.predict(data, useCPUOnly=True)["output"]
-# ml_output = downsample2(downsample2(torch.tensor(ml_output))).numpy()
-# ml_output = downsample2(torch.tensor(ml_output)).numpy()
-wavfile.write("./ckpt/test/enhanced_with_mlmodel_half.wav", 16000, ml_output)
+# data = {"input": half_audio.detach().cpu().numpy()}
+# ml_output = model.predict(data, useCPUOnly=True)["output"]
+# # ml_output = downsample2(downsample2(torch.tensor(ml_output))).numpy()
+# # ml_output = downsample2(torch.tensor(ml_output)).numpy()
+# wavfile.write("./ckpt/test/enhanced_with_mlmodel_half.wav", 16000, ml_output)
 
