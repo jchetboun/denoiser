@@ -1,26 +1,31 @@
 import torch
 import torchaudio
-import tensorflow as tf
 import keras
 from torch.nn import functional as F
 from denoiser.utils import deserialize_model
 import coremltools
 
 
-@tf.function
-def glu(x, dim=-1):
-    a, b = tf.split(x, 2, axis=dim)
-    return a * tf.math.sigmoid(b)
-
-
-def encoder_block(x, hidden, kernel_size, stride, ch_scale, activation):
+def encoder_block(x, hidden, kernel_size, stride, use_glu):
     x = keras.layers.Conv1D(hidden, kernel_size, strides=stride, activation=keras.activations.relu)(x)
-    x = keras.layers.Conv1D(hidden * ch_scale, 1, activation=activation)(x)
+    if use_glu:
+        # Split
+        a = keras.layers.Conv1D(hidden, 1)(x)
+        b = keras.layers.Conv1D(hidden, 1, activation=keras.activations.sigmoid)(x)
+        x = keras.layers.Multiply()([a, b])
+    else:
+        x = keras.layers.Conv1D(hidden, 1, activation=keras.activations.relu)(x)
     return x
 
 
-def decoder_block(x, ch_scale, hidden, activation, chout, kernel_size, stride, index):
-    x = keras.layers.Conv1D(ch_scale * hidden, 1, activation=activation)(x)
+def decoder_block(x, hidden, use_glu, chout, kernel_size, stride, index):
+    if use_glu:
+        # Split
+        a = keras.layers.Conv1D(hidden, 1)(x)
+        b = keras.layers.Conv1D(hidden, 1, activation=keras.activations.sigmoid)(x)
+        x = keras.layers.Multiply()([a, b])
+    else:
+        x = keras.layers.Conv1D(hidden, 1, activation=keras.activations.relu)(x)
     x = keras.layers.Reshape((int(x.shape[1]), 1, int(x.shape[2])))(x)
     if index > 0:
         x = keras.layers.Conv2DTranspose(chout, (kernel_size, 1), strides=(stride, 1),
@@ -38,13 +43,11 @@ def demucs_keras(x,
                  stride=4,
                  causal=False,
                  growth=2,
-                 use_glu=False):
+                 use_glu=True):
 
     skips = []
-    activation = glu if use_glu else keras.activations.relu
-    ch_scale = 2 if use_glu else 1
     for index in range(depth):
-        x = encoder_block(x, hidden, kernel_size, stride, ch_scale, activation)
+        x = encoder_block(x, hidden, kernel_size, stride, use_glu)
         skips.append(x)
         hidden = growth * hidden
     hidden = int(hidden / growth)
@@ -57,15 +60,26 @@ def demucs_keras(x,
         hidden = int(hidden / growth)
         skip = skips.pop(-1)
         x = keras.layers.Add()([x, skip])
-        x = decoder_block(x, ch_scale, hidden * growth, activation, hidden, kernel_size, stride, index)
+        x = decoder_block(x, hidden * growth, use_glu, hidden, kernel_size, stride, index)
     return x
+
+
+def transfer_weights(pytorch_model, keras_model, depth=4):
+    pytorch_dict = pytorch_model.state_dict()
+    # Encoder
+    for index in range(depth):
+        key = 'encoder.' + str(index) + '.0.'
+        keras_model.layers[2 * index + 1].set_weights([pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0), pytorch_dict[key + 'bias'].numpy()])
+        key = 'encoder.' + str(index) + '.2.'
+        keras_model.layers[2 * index + 2].set_weights([pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0), pytorch_dict[key + 'bias'].numpy()])
+
 
 
 # Load the PyTorch model
 path = "./ckpt/best.th"
 pkg = torch.load(path)
-model = deserialize_model(pkg)
-model.eval()
+model_pt = deserialize_model(pkg)
+model_pt.eval()
 
 # Audio for evaluation
 # audio_path = "../examples/audio_samples/p232_052_noisy.wav"
@@ -82,11 +96,12 @@ model.eval()
 # Build the Keras model
 input = keras.Input(batch_shape=(1, 2560, 1))
 output = demucs_keras(input)
-model = keras.Model(inputs=input, outputs=output)
-model.build(input_shape=(1, 2560, 1))
-model.summary()
+model_ke = keras.Model(inputs=input, outputs=output)
+model_ke.build(input_shape=(1, 2560, 1))
+model_ke.summary()
+# transfer_weights(model_pt, model_ke)
 coreml_model = coremltools.converters.keras.convert(
-    model,
+    model_ke,
     input_names=['input'],
     output_names=["output"],
 )
