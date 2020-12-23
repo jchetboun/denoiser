@@ -1,9 +1,11 @@
+import keras
 import torch
 import torchaudio
-import keras
+import coremltools
+import numpy as np
+from scipy.io import wavfile
 from torch.nn import functional as F
 from denoiser.utils import deserialize_model
-import coremltools
 
 
 def encoder_block(x, hidden, kernel_size, stride, use_glu):
@@ -53,7 +55,9 @@ def demucs_keras(x,
     hidden = int(hidden / growth)
     if causal:
         x = keras.layers.LSTM(hidden, return_sequences=True)(x)
+        x = keras.layers.LSTM(hidden, return_sequences=True)(x)
     else:
+        x = keras.layers.Bidirectional(keras.layers.LSTM(hidden, return_sequences=True))(x)
         x = keras.layers.Bidirectional(keras.layers.LSTM(hidden, return_sequences=True))(x)
         x = keras.layers.Dense(hidden)(x)
     for index in reversed(range(depth)):
@@ -64,16 +68,76 @@ def demucs_keras(x,
     return x
 
 
-def transfer_weights(pytorch_model, keras_model, depth=4):
+def transfer_weights(pytorch_model, keras_model, depth=4, use_glu=True, causal=False):
     pytorch_dict = pytorch_model.state_dict()
     # Encoder
     for index in range(depth):
-        key = 'encoder.' + str(index) + '.0.'
-        keras_model.layers[2 * index + 1].set_weights([pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0), pytorch_dict[key + 'bias'].numpy()])
-        key = 'encoder.' + str(index) + '.2.'
-        keras_model.layers[2 * index + 2].set_weights([pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0), pytorch_dict[key + 'bias'].numpy()])
-
-
+        if use_glu:
+            key = 'encoder.' + str(index) + '.0.'
+            keras_model.layers[4 * index + 1].set_weights([pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0),
+                                                           pytorch_dict[key + 'bias'].numpy()])
+            key = 'encoder.' + str(index) + '.2.'
+            w1, w2 = np.split(pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0), 2, axis=-1)
+            b1, b2 = np.split(pytorch_dict[key + 'bias'].numpy(), 2, axis=-1)
+            keras_model.layers[4 * index + 2].set_weights([w1, b1])
+            keras_model.layers[4 * index + 3].set_weights([w2, b2])
+        else:
+            key = 'encoder.' + str(index) + '.0.'
+            keras_model.layers[2 * index + 1].set_weights([pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0),
+                                                           pytorch_dict[key + 'bias'].numpy()])
+            key = 'encoder.' + str(index) + '.2.'
+            keras_model.layers[2 * index + 2].set_weights([pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0),
+                                                           pytorch_dict[key + 'bias'].numpy()])
+    # LSTM
+    index = 4 * depth + 1 if use_glu else 2 * depth + 1
+    if causal:
+        keras_model.layers[index].set_weights([pytorch_dict['lstm.lstm.weight_ih_l0'].numpy().transpose(),
+                                               pytorch_dict['lstm.lstm.weight_hh_l0'].numpy().transpose(),
+                                               pytorch_dict['lstm.lstm.bias_ih_l0'].numpy() +
+                                               pytorch_dict['lstm.lstm.bias_hh_l0'].numpy()])
+        keras_model.layers[index + 1].set_weights([pytorch_dict['lstm.lstm.weight_ih_l1'].numpy().transpose(),
+                                                   pytorch_dict['lstm.lstm.weight_hh_l1'].numpy().transpose(),
+                                                   pytorch_dict['lstm.lstm.bias_ih_l1'].numpy() +
+                                                   pytorch_dict['lstm.lstm.bias_hh_l1'].numpy()])
+    else:
+        keras_model.layers[index].set_weights([pytorch_dict['lstm.lstm.weight_ih_l0'].numpy().transpose(),
+                                               pytorch_dict['lstm.lstm.weight_hh_l0'].numpy().transpose(),
+                                               pytorch_dict['lstm.lstm.bias_ih_l0'].numpy() +
+                                               pytorch_dict['lstm.lstm.bias_hh_l0'].numpy(),
+                                               pytorch_dict['lstm.lstm.weight_ih_l0_reverse'].numpy().transpose(),
+                                               pytorch_dict['lstm.lstm.weight_hh_l0_reverse'].numpy().transpose(),
+                                               pytorch_dict['lstm.lstm.bias_ih_l0_reverse'].numpy() +
+                                               pytorch_dict['lstm.lstm.bias_hh_l0_reverse'].numpy()])
+        keras_model.layers[index + 1].set_weights([pytorch_dict['lstm.lstm.weight_ih_l1'].numpy().transpose(),
+                                                   pytorch_dict['lstm.lstm.weight_hh_l1'].numpy().transpose(),
+                                                   pytorch_dict['lstm.lstm.bias_ih_l1'].numpy() +
+                                                   pytorch_dict['lstm.lstm.bias_hh_l1'].numpy(),
+                                                   pytorch_dict['lstm.lstm.weight_ih_l1_reverse'].numpy().transpose(),
+                                                   pytorch_dict['lstm.lstm.weight_hh_l1_reverse'].numpy().transpose(),
+                                                   pytorch_dict['lstm.lstm.bias_ih_l1_reverse'].numpy() +
+                                                   pytorch_dict['lstm.lstm.bias_hh_l1_reverse'].numpy()])
+        keras_model.layers[index + 2].set_weights([pytorch_dict['lstm.linear.weight'].numpy().transpose(),
+                                                   pytorch_dict['lstm.linear.bias'].numpy()])
+    # Decoder
+    last_index = index + 3 if causal else index + 4
+    for index in range(depth):
+        if use_glu:
+            key = 'decoder.' + str(index) + '.0.'
+            w1, w2 = np.split(pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0), 2, axis=-1)
+            b1, b2 = np.split(pytorch_dict[key + 'bias'].numpy(), 2, axis=-1)
+            keras_model.layers[7 * index + last_index].set_weights([w1, b1])
+            keras_model.layers[7 * index + last_index + 1].set_weights([w2, b2])
+            key = 'decoder.' + str(index) + '.2.'
+            keras_model.layers[7 * index + last_index + 4].set_weights([
+                np.expand_dims(pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0), axis=1),
+                pytorch_dict[key + 'bias'].numpy()])
+        else:
+            key = 'decoder.' + str(index) + '.0.'
+            keras_model.layers[5 * index + last_index].set_weights([pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0), pytorch_dict[key + 'bias'].numpy()])
+            key = 'decoder.' + str(index) + '.2.'
+            keras_model.layers[5 * index + last_index + 2].set_weights([
+                np.expand_dims(pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0), axis=1),
+                pytorch_dict[key + 'bias'].numpy()])
 
 # Load the PyTorch model
 path = "./ckpt/best.th"
@@ -82,28 +146,29 @@ model_pt = deserialize_model(pkg)
 model_pt.eval()
 
 # Audio for evaluation
-# audio_path = "../examples/audio_samples/p232_052_noisy.wav"
-# audio, sr = torchaudio.load(audio_path)
-# length = audio.shape[-1]
-# audio = F.pad(audio, (0, model.valid_length(length) - length))
-# audio = audio.unsqueeze(1)
-
-# Run the PyTorch model
-# x = torch.rand((1, 1, 25600))
-# with torch.no_grad():
-#     enhanced_pytorch = model(x)[0]
+audio_path = "../examples/audio_samples/p232_052_noisy.wav"
+audio, sr = torchaudio.load(audio_path)
+length = audio.shape[-1]
+audio = F.pad(audio, (0, model_pt.valid_length(length) - length))
+audio = audio[:, :2560]
+length = audio.shape[-1]
+audio = audio.unsqueeze(1)
 
 # Build the Keras model
-input = keras.Input(batch_shape=(1, 2560, 1))
+input = keras.Input(batch_shape=(1, length, 1))
 output = demucs_keras(input)
 model_ke = keras.Model(inputs=input, outputs=output)
-model_ke.build(input_shape=(1, 2560, 1))
+model_ke.build(input_shape=(1, length, 1))
 model_ke.summary()
-# transfer_weights(model_pt, model_ke)
+transfer_weights(model_pt, model_ke)
+enhanced = model_ke.predict(audio.numpy().transpose(0, 2, 1))
+wavfile.write('test.wav', sr, enhanced[0, :, 0])
 coreml_model = coremltools.converters.keras.convert(
     model_ke,
     input_names=['input'],
     output_names=["output"],
 )
 coreml_model.save("test.mlmodel")
-
+# data = {"input": audio.detach().cpu().numpy()}
+# ml_output = coreml_model.predict(data)["output"]
+# wavfile.write('test_ml.wav', sr, enhanced[0, :, 0])
