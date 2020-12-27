@@ -158,17 +158,24 @@ std = audio.std(dim=-1).numpy()[0, 0]
 # Test the PyTorch model
 with torch.no_grad():
     enhanced_pytorch = model_pt(audio)[0]
-wavfile.write('test_pt.wav', sr, enhanced_pytorch[0].numpy())
+wavfile.write('./ckpt/test/enhanced_pt.wav', sr, enhanced_pytorch[0].numpy())
 
 # Build the Keras model
 input = keras.Input(batch_shape=(1, length, 1))
-output = demucs_keras(input)
+output = demucs_keras(input,
+                      hidden=model_pt.hidden,
+                      depth=model_pt.depth,
+                      kernel_size=model_pt.kernel_size,
+                      stride=model_pt.stride,
+                      causal=model_pt.causal,
+                      growth=2,
+                      use_glu=True)
 model_ke = keras.Model(inputs=input, outputs=output)
 model_ke.build(input_shape=(1, length, 1))
 model_ke.summary()
-transfer_weights(model_pt, model_ke)
+transfer_weights(model_pt, model_ke, depth=model_pt.depth, use_glu=True, causal=model_pt.causal)
 enhanced = model_ke.predict(audio.numpy().transpose(0, 2, 1) / (0.001 + std))
-wavfile.write('test_ke.wav', sr, std * enhanced[0, :, 0])
+wavfile.write('./ckpt/test/enhanced_ke.wav', sr, std * enhanced[0, :, 0])
 
 # Convert to CoreML
 coreml_model = coremltools.converters.keras.convert(
@@ -176,10 +183,7 @@ coreml_model = coremltools.converters.keras.convert(
     input_names=['input'],
     output_names=["output"],
 )
-# spec = coreml_model.get_spec()
-# spec.specificationVersion = 3
-# coreml_model = coremltools.models.MLModel(spec)
-coreml_model.save("test.mlmodel")
+coreml_model.save("./ckpt/best_from_keras.mlmodel")
 data = {"input": audio.detach().cpu().numpy().transpose(2, 0, 1) / (0.001 + std)}
 ml_output = coreml_model.predict(data, useCPUOnly=True)["output"]
-wavfile.write('test_ml.wav', sr, std * enhanced[0, :, 0])
+wavfile.write('./ckpt/test/enhanced_ml.wav', sr, std * enhanced[0, :, 0])

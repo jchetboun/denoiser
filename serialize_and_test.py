@@ -54,6 +54,8 @@ audio, sr = torchaudio.load(audio_path)
 length = audio.shape[-1]
 from torch.nn import functional as F
 audio = F.pad(audio, (0, model.valid_length(length) - length))
+audio = audio[:, 8960:2*8960]
+length = audio.shape[-1]
 audio = audio.unsqueeze(1)
 half_audio = audio[:, :, :int(audio.shape[-1] / 2)]
 # audio = upsample2(upsample2(audio))
