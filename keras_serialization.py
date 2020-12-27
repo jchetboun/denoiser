@@ -54,13 +54,13 @@ def demucs_keras(x,
         hidden = growth * hidden
     hidden = int(hidden / growth)
     if causal:
-        x = keras.layers.LSTM(hidden, return_sequences=True)(x)
-        x = keras.layers.LSTM(hidden, return_sequences=True)(x)
+        x = keras.layers.LSTM(hidden, return_sequences=True, recurrent_activation=keras.activations.sigmoid)(x)
+        x = keras.layers.LSTM(hidden, return_sequences=True, recurrent_activation=keras.activations.sigmoid)(x)
     else:
-        x = keras.layers.Bidirectional(keras.layers.LSTM(hidden, return_sequences=True))(x)
-        x = keras.layers.Bidirectional(keras.layers.LSTM(hidden, return_sequences=True))(x)
+        x = keras.layers.Bidirectional(keras.layers.LSTM(hidden, return_sequences=True, recurrent_activation=keras.activations.sigmoid))(x)
+        x = keras.layers.Bidirectional(keras.layers.LSTM(hidden, return_sequences=True, recurrent_activation=keras.activations.sigmoid))(x)
         x = keras.layers.Dense(hidden)(x)
-    for index in reversed(range(depth)):
+    for index in reversed(range(depth-4, depth)):
         hidden = int(hidden / growth)
         skip = skips.pop(-1)
         x = keras.layers.Add()([x, skip])
@@ -150,9 +150,15 @@ audio_path = "../examples/audio_samples/p232_052_noisy.wav"
 audio, sr = torchaudio.load(audio_path)
 length = audio.shape[-1]
 audio = F.pad(audio, (0, model_pt.valid_length(length) - length))
-audio = audio[:, :2560]
+audio = audio[:, 8960:2*8960]
 length = audio.shape[-1]
 audio = audio.unsqueeze(1)
+std = audio.std(dim=-1).numpy()[0, 0]
+
+# Test the PyTorch model
+with torch.no_grad():
+    enhanced_pytorch = model_pt(audio)[0]
+wavfile.write('test_pt.wav', sr, enhanced_pytorch[0].numpy())
 
 # Build the Keras model
 input = keras.Input(batch_shape=(1, length, 1))
@@ -161,14 +167,19 @@ model_ke = keras.Model(inputs=input, outputs=output)
 model_ke.build(input_shape=(1, length, 1))
 model_ke.summary()
 transfer_weights(model_pt, model_ke)
-enhanced = model_ke.predict(audio.numpy().transpose(0, 2, 1))
-wavfile.write('test.wav', sr, enhanced[0, :, 0])
+enhanced = model_ke.predict(audio.numpy().transpose(0, 2, 1) / (0.001 + std))
+wavfile.write('test_ke.wav', sr, std * enhanced[0, :, 0])
+
+# Convert to CoreML
 coreml_model = coremltools.converters.keras.convert(
     model_ke,
     input_names=['input'],
     output_names=["output"],
 )
+# spec = coreml_model.get_spec()
+# spec.specificationVersion = 3
+# coreml_model = coremltools.models.MLModel(spec)
 coreml_model.save("test.mlmodel")
-# data = {"input": audio.detach().cpu().numpy()}
-# ml_output = coreml_model.predict(data)["output"]
-# wavfile.write('test_ml.wav', sr, enhanced[0, :, 0])
+data = {"input": audio.detach().cpu().numpy().transpose(2, 0, 1) / (0.001 + std)}
+ml_output = coreml_model.predict(data, useCPUOnly=True)["output"]
+wavfile.write('test_ml.wav', sr, std * enhanced[0, :, 0])
