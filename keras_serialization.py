@@ -9,32 +9,32 @@ from denoiser.utils import deserialize_model
 
 
 def encoder_block(x, hidden, kernel_size, stride, use_glu):
-    x = keras.layers.Conv1D(hidden, kernel_size, strides=stride, activation=keras.activations.relu)(x)
+    x = keras.layers.Conv2D(hidden, (1, kernel_size), strides=(1, stride), activation=keras.activations.relu)(x)
     if use_glu:
         # Split
-        a = keras.layers.Conv1D(hidden, 1)(x)
-        b = keras.layers.Conv1D(hidden, 1, activation=keras.activations.sigmoid)(x)
+        a = keras.layers.Conv2D(hidden, (1, 1))(x)
+        b = keras.layers.Conv2D(hidden, (1, 1), activation=keras.activations.sigmoid)(x)
         x = keras.layers.Multiply()([a, b])
     else:
-        x = keras.layers.Conv1D(hidden, 1, activation=keras.activations.relu)(x)
+        x = keras.layers.Conv2D(hidden, (1, 1), activation=keras.activations.relu)(x)
     return x
 
 
 def decoder_block(x, hidden, use_glu, chout, kernel_size, stride, index):
     if use_glu:
         # Split
-        a = keras.layers.Conv1D(hidden, 1)(x)
-        b = keras.layers.Conv1D(hidden, 1, activation=keras.activations.sigmoid)(x)
+        a = keras.layers.Conv2D(hidden, (1, 1))(x)
+        b = keras.layers.Conv2D(hidden, (1, 1), activation=keras.activations.sigmoid)(x)
         x = keras.layers.Multiply()([a, b])
     else:
-        x = keras.layers.Conv1D(hidden, 1, activation=keras.activations.relu)(x)
-    x = keras.layers.Reshape((int(x.shape[1]), 1, int(x.shape[2])))(x)
+        x = keras.layers.Conv2D(hidden, (1, 1), activation=keras.activations.relu)(x)
+    # x = keras.layers.Reshape((int(x.shape[1]), 1, int(x.shape[2])))(x)
     if index > 0:
-        x = keras.layers.Conv2DTranspose(chout, (kernel_size, 1), strides=(stride, 1),
+        x = keras.layers.Conv2DTranspose(chout, (1, kernel_size), strides=(1, stride),
                                          activation=keras.activations.relu)(x)
     else:
-        x = keras.layers.Conv2DTranspose(1, (kernel_size, 1), strides=(stride, 1))(x)
-    x = keras.layers.Reshape((int(x.shape[1]), int(x.shape[3])))(x)
+        x = keras.layers.Conv2DTranspose(1, (1, kernel_size), strides=(1, stride))(x)
+    # x = keras.layers.Reshape((int(x.shape[1]), int(x.shape[3])))(x)
     return x
 
 
@@ -53,6 +53,7 @@ def demucs_keras(x,
         skips.append(x)
         hidden = growth * hidden
     hidden = int(hidden / growth)
+    x = keras.layers.Reshape((-1, hidden))(x)
     if causal:
         x = keras.layers.LSTM(hidden, return_sequences=True, recurrent_activation=keras.activations.sigmoid)(x)
         x = keras.layers.LSTM(hidden, return_sequences=True, recurrent_activation=keras.activations.sigmoid)(x)
@@ -60,6 +61,7 @@ def demucs_keras(x,
         x = keras.layers.Bidirectional(keras.layers.LSTM(hidden, return_sequences=True, recurrent_activation=keras.activations.sigmoid))(x)
         x = keras.layers.Bidirectional(keras.layers.LSTM(hidden, return_sequences=True, recurrent_activation=keras.activations.sigmoid))(x)
         x = keras.layers.Dense(hidden)(x)
+    x = keras.layers.Reshape((1, -1, hidden))(x)
     for index in reversed(range(depth-4, depth)):
         hidden = int(hidden / growth)
         skip = skips.pop(-1)
@@ -74,22 +76,22 @@ def transfer_weights(pytorch_model, keras_model, depth=4, use_glu=True, causal=F
     for index in range(depth):
         if use_glu:
             key = 'encoder.' + str(index) + '.0.'
-            keras_model.layers[4 * index + 1].set_weights([pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0),
+            keras_model.layers[4 * index + 1].set_weights([np.expand_dims(pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0), axis=0),
                                                            pytorch_dict[key + 'bias'].numpy()])
             key = 'encoder.' + str(index) + '.2.'
             w1, w2 = np.split(pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0), 2, axis=-1)
             b1, b2 = np.split(pytorch_dict[key + 'bias'].numpy(), 2, axis=-1)
-            keras_model.layers[4 * index + 2].set_weights([w1, b1])
-            keras_model.layers[4 * index + 3].set_weights([w2, b2])
+            keras_model.layers[4 * index + 2].set_weights([np.expand_dims(w1, axis=0), b1])
+            keras_model.layers[4 * index + 3].set_weights([np.expand_dims(w2, axis=0), b2])
         else:
             key = 'encoder.' + str(index) + '.0.'
-            keras_model.layers[2 * index + 1].set_weights([pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0),
+            keras_model.layers[2 * index + 1].set_weights([np.expand_dims(pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0), axis=0),
                                                            pytorch_dict[key + 'bias'].numpy()])
             key = 'encoder.' + str(index) + '.2.'
-            keras_model.layers[2 * index + 2].set_weights([pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0),
+            keras_model.layers[2 * index + 2].set_weights([np.expand_dims(pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0), axis=0),
                                                            pytorch_dict[key + 'bias'].numpy()])
     # LSTM
-    index = 4 * depth + 1 if use_glu else 2 * depth + 1
+    index = 4 * depth + 2 if use_glu else 2 * depth + 2
     if causal:
         keras_model.layers[index].set_weights([pytorch_dict['lstm.lstm.weight_ih_l0'].numpy().transpose(),
                                                pytorch_dict['lstm.lstm.weight_hh_l0'].numpy().transpose(),
@@ -119,24 +121,24 @@ def transfer_weights(pytorch_model, keras_model, depth=4, use_glu=True, causal=F
         keras_model.layers[index + 2].set_weights([pytorch_dict['lstm.linear.weight'].numpy().transpose(),
                                                    pytorch_dict['lstm.linear.bias'].numpy()])
     # Decoder
-    last_index = index + 3 if causal else index + 4
+    last_index = index + 4 if causal else index + 5
     for index in range(depth):
         if use_glu:
             key = 'decoder.' + str(index) + '.0.'
             w1, w2 = np.split(pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0), 2, axis=-1)
             b1, b2 = np.split(pytorch_dict[key + 'bias'].numpy(), 2, axis=-1)
-            keras_model.layers[7 * index + last_index].set_weights([w1, b1])
-            keras_model.layers[7 * index + last_index + 1].set_weights([w2, b2])
+            keras_model.layers[5 * index + last_index].set_weights([np.expand_dims(w1, axis=0), b1])
+            keras_model.layers[5 * index + last_index + 1].set_weights([np.expand_dims(w2, axis=0), b2])
             key = 'decoder.' + str(index) + '.2.'
-            keras_model.layers[7 * index + last_index + 4].set_weights([
-                np.expand_dims(pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0), axis=1),
+            keras_model.layers[5 * index + last_index + 3].set_weights([
+                np.expand_dims(pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0), axis=0),
                 pytorch_dict[key + 'bias'].numpy()])
         else:
             key = 'decoder.' + str(index) + '.0.'
-            keras_model.layers[5 * index + last_index].set_weights([pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0), pytorch_dict[key + 'bias'].numpy()])
+            keras_model.layers[3 * index + last_index].set_weights([np.expand_dims(pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0), axis=0), pytorch_dict[key + 'bias'].numpy()])
             key = 'decoder.' + str(index) + '.2.'
-            keras_model.layers[5 * index + last_index + 2].set_weights([
-                np.expand_dims(pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0), axis=1),
+            keras_model.layers[3 * index + last_index + 1].set_weights([
+                np.expand_dims(pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0), axis=0),
                 pytorch_dict[key + 'bias'].numpy()])
 
 # Load the PyTorch model
@@ -150,7 +152,7 @@ audio_path = "../examples/audio_samples/p232_052_noisy.wav"
 audio, sr = torchaudio.load(audio_path)
 length = audio.shape[-1]
 audio = F.pad(audio, (0, model_pt.valid_length(length) - length))
-audio = audio[:, 8960:2*8960]
+audio = audio[:, :16384]
 length = audio.shape[-1]
 audio = audio.unsqueeze(1)
 std = audio.std(dim=-1).numpy()[0, 0]
@@ -161,7 +163,7 @@ with torch.no_grad():
 wavfile.write('./ckpt/test/enhanced_pt.wav', sr, enhanced_pytorch[0].numpy())
 
 # Build the Keras model
-input = keras.Input(batch_shape=(1, length, 1))
+input = keras.Input(shape=(1, length, 1))
 output = demucs_keras(input,
                       hidden=model_pt.hidden,
                       depth=model_pt.depth,
@@ -174,8 +176,8 @@ model_ke = keras.Model(inputs=input, outputs=output)
 model_ke.build(input_shape=(1, length, 1))
 model_ke.summary()
 transfer_weights(model_pt, model_ke, depth=model_pt.depth, use_glu=True, causal=model_pt.causal)
-enhanced = model_ke.predict(audio.numpy().transpose(0, 2, 1) / (0.001 + std))
-wavfile.write('./ckpt/test/enhanced_ke.wav', sr, std * enhanced[0, :, 0])
+enhanced = model_ke.predict(np.expand_dims(audio.numpy().transpose(0, 2, 1), axis=0) / (0.001 + std))
+wavfile.write('./ckpt/test/enhanced_ke.wav', sr, std * enhanced[0, 0, :, 0])
 
 # Convert to CoreML
 coreml_model = coremltools.converters.keras.convert(
@@ -184,6 +186,6 @@ coreml_model = coremltools.converters.keras.convert(
     output_names=["output"],
 )
 coreml_model.save("./ckpt/best_from_keras.mlmodel")
-data = {"input": audio.detach().cpu().numpy().transpose(2, 0, 1) / (0.001 + std)}
+data = {"input": audio.detach().cpu().numpy() / (0.001 + std)}
 ml_output = coreml_model.predict(data, useCPUOnly=True)["output"]
-wavfile.write('./ckpt/test/enhanced_ml.wav', sr, std * enhanced[0, :, 0])
+wavfile.write('./ckpt/test/enhanced_ml.wav', sr, std * ml_output[0, 0, :])
