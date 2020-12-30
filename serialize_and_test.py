@@ -14,6 +14,8 @@ from serialization.utils import create_preprocess_dict, compress_and_save
 from coremltools.models import MLModel
 from coremltools.models.neural_network import flexible_shape_utils
 
+import os
+os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
 # Function to change the CoreML input to flexible size
 def update_input_range(model):
@@ -51,10 +53,10 @@ model.eval()
 # Audio for evaluation
 audio_path = "../examples/audio_samples/p232_052_noisy.wav"
 audio, sr = torchaudio.load(audio_path)
+audio = audio[:, :16000]
 length = audio.shape[-1]
 from torch.nn import functional as F
 audio = F.pad(audio, (0, model.valid_length(length) - length))
-audio = audio[:, 8960:2*8960]
 length = audio.shape[-1]
 audio = audio.unsqueeze(1)
 half_audio = audio[:, :, :int(audio.shape[-1] / 2)]

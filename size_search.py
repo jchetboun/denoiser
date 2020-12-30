@@ -2,10 +2,13 @@ import os
 import onnx
 import torch
 import itertools
-# import onnx_coreml
+import onnx_coreml
 from onnxsim import simplify
 from denoiser.demucs import Demucs
 from serialization.utils import create_preprocess_dict, compress_and_save
+
+import os
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
 
 
 def my_func(**args):
@@ -52,9 +55,7 @@ def my_func(**args):
     assert check, "Simplified ONNX model could not be validated"
     onnx.save(model_simple, "./tmp/" + name + ".onnx")
 
-    # mlmodel = onnx_coreml.convert(onnx.load_model("./tmp/" + name + ".onnx"), minimum_ios_deployment_target="13")
-    import coremltools as ct
-    mlmodel = ct.converters.onnx.convert(model="./tmp/" + name + ".onnx")
+    mlmodel = onnx_coreml.convert(onnx.load_model("./tmp/" + name + ".onnx"), minimum_ios_deployment_target="13")
     pd = create_preprocess_dict(length, "Fixed", side_length=length, output_classes="irrelevant")
     compress_and_save(mlmodel,
                       save_path="./tmp",
@@ -82,11 +83,11 @@ f.write("Hidden\tDepth\tKernel\tLSTM\tCausal\tParameters\tSize\n")
 f.close()
 
 params = {
-    'n_hidden': [64],
-    'n_depth': [5],
-    'n_kernel': [8],
+    'n_hidden': [16, 32, 48, 64, 96, 128],
+    'n_depth': [2, 3, 4, 5],
+    'n_kernel': [4, 8, 10, 12],
     'n_lstm': [True],
-    'n_causal': [True]
+    'n_causal': [True, False]
 }
 
 keys = list(params)

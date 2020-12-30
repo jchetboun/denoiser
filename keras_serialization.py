@@ -6,6 +6,7 @@ import numpy as np
 from scipy.io import wavfile
 from torch.nn import functional as F
 from denoiser.utils import deserialize_model
+from serialization.utils import create_preprocess_dict, compress_and_save
 
 
 def encoder_block(x, hidden, kernel_size, stride, use_glu):
@@ -28,13 +29,11 @@ def decoder_block(x, hidden, use_glu, chout, kernel_size, stride, index):
         x = keras.layers.Multiply()([a, b])
     else:
         x = keras.layers.Conv2D(hidden, (1, 1), activation=keras.activations.relu)(x)
-    # x = keras.layers.Reshape((int(x.shape[1]), 1, int(x.shape[2])))(x)
     if index > 0:
         x = keras.layers.Conv2DTranspose(chout, (1, kernel_size), strides=(1, stride),
                                          activation=keras.activations.relu)(x)
     else:
         x = keras.layers.Conv2DTranspose(1, (1, kernel_size), strides=(1, stride))(x)
-    # x = keras.layers.Reshape((int(x.shape[1]), int(x.shape[3])))(x)
     return x
 
 
@@ -62,7 +61,7 @@ def demucs_keras(x,
         x = keras.layers.Bidirectional(keras.layers.LSTM(hidden, return_sequences=True, recurrent_activation=keras.activations.sigmoid))(x)
         x = keras.layers.Dense(hidden)(x)
     x = keras.layers.Reshape((1, -1, hidden))(x)
-    for index in reversed(range(depth-4, depth)):
+    for index in reversed(range(depth)):
         hidden = int(hidden / growth)
         skip = skips.pop(-1)
         x = keras.layers.Add()([x, skip])
@@ -141,6 +140,7 @@ def transfer_weights(pytorch_model, keras_model, depth=4, use_glu=True, causal=F
                 np.expand_dims(pytorch_dict[key + 'weight'].numpy().transpose(2, 1, 0), axis=0),
                 pytorch_dict[key + 'bias'].numpy()])
 
+
 # Load the PyTorch model
 path = "./ckpt/best.th"
 pkg = torch.load(path)
@@ -150,9 +150,9 @@ model_pt.eval()
 # Audio for evaluation
 audio_path = "../examples/audio_samples/p232_052_noisy.wav"
 audio, sr = torchaudio.load(audio_path)
+audio = audio[:, :16000]
 length = audio.shape[-1]
 audio = F.pad(audio, (0, model_pt.valid_length(length) - length))
-audio = audio[:, :16384]
 length = audio.shape[-1]
 audio = audio.unsqueeze(1)
 std = audio.std(dim=-1).numpy()[0, 0]
@@ -184,8 +184,21 @@ coreml_model = coremltools.converters.keras.convert(
     model_ke,
     input_names=['input'],
     output_names=["output"],
+    model_precision='float16'
 )
 coreml_model.save("./ckpt/best_from_keras.mlmodel")
+pd = create_preprocess_dict(length,
+                            "Fixed",
+                            side_length=length,
+                            output_classes="irrelevant")
+compress_and_save(coreml_model,
+                  save_path="./ckpt",
+                  model_name="best_from_keras",
+                  version=1.0,
+                  ckpt_location="./ckpt/best_from_keras.mlmodel",
+                  preprocess_dict=pd,
+                  model_description="Audio Denoising",
+                  convert_to_float16=True)
 data = {"input": audio.detach().cpu().numpy() / (0.001 + std)}
 ml_output = coreml_model.predict(data, useCPUOnly=True)["output"]
 wavfile.write('./ckpt/test/enhanced_ml.wav', sr, std * ml_output[0, 0, :])
