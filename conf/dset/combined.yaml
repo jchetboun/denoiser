@@ -1,0 +1,7 @@
+dset:
+  train: /isilon/Datasets/Audio/Combined/tr
+  valid:
+  test: /isilon/Datasets/Audio/Combined/ts
+  noisy_json:
+  noisy_dir: /isilon/Datasets/Audio/Valentini/16000/noisy_samples_wav
+  matching: dns

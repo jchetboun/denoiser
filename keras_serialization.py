@@ -7,6 +7,8 @@ from scipy.io import wavfile
 from torch.nn import functional as F
 from denoiser.utils import deserialize_model
 from serialization.utils import create_preprocess_dict, compress_and_save
+from coremltools.proto import FeatureTypes_pb2
+from coremltools.models import MLModel
 
 
 def encoder_block(x, hidden, kernel_size, stride, use_glu):
@@ -186,6 +188,14 @@ coreml_model = coremltools.converters.keras.convert(
     output_names=["output"],
     model_precision='float16'
 )
+
+# Input / Output Float 32
+spec = coreml_model.get_spec()
+spec.description.input[0].type.multiArrayType.dataType = FeatureTypes_pb2.ArrayFeatureType.ArrayDataType.FLOAT32
+spec.description.output[0].type.multiArrayType.dataType = FeatureTypes_pb2.ArrayFeatureType.ArrayDataType.FLOAT32
+coreml_model = MLModel(spec)
+
+# Save
 coreml_model.save("./ckpt/best_from_keras.mlmodel")
 pd = create_preprocess_dict(length,
                             "Fixed",
