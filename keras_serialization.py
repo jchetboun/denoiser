@@ -144,7 +144,7 @@ def transfer_weights(pytorch_model, keras_model, depth=4, use_glu=True, causal=F
 
 
 # Load the PyTorch model
-path = "./ckpt/best.th"
+path = "./ckpt/best_48_3_12.th"
 pkg = torch.load(path)
 model_pt = deserialize_model(pkg)
 model_pt.eval()
@@ -193,19 +193,20 @@ coreml_model = coremltools.converters.keras.convert(
 spec = coreml_model.get_spec()
 spec.description.input[0].type.multiArrayType.dataType = FeatureTypes_pb2.ArrayFeatureType.ArrayDataType.FLOAT32
 spec.description.output[0].type.multiArrayType.dataType = FeatureTypes_pb2.ArrayFeatureType.ArrayDataType.FLOAT32
+spec.description.metadata.userDefined["overlappingSamplesCount"] = "1600"
 coreml_model = MLModel(spec)
 
 # Save
-coreml_model.save("./ckpt/best_from_keras.mlmodel")
+coreml_model.save("./ckpt/best_48_3_12_from_keras.mlmodel")
 pd = create_preprocess_dict(length,
                             "Fixed",
                             side_length=length,
                             output_classes="irrelevant")
 compress_and_save(coreml_model,
                   save_path="./ckpt",
-                  model_name="best_from_keras",
+                  model_name="best_48_3_12_from_keras",
                   version=1.0,
-                  ckpt_location="./ckpt/best_from_keras.mlmodel",
+                  ckpt_location="./ckpt/best_from_keras_48_3_12.mlmodel",
                   preprocess_dict=pd,
                   model_description="Audio Denoising",
                   convert_to_float16=True)
